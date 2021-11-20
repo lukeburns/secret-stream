@@ -5,10 +5,10 @@
   "main": "index.js",
   "dependencies": {
     "b4a": "^1.1.0",
-    "noise-curve-ed": "^1.0.2",
+    "noise-curve-ed": "lukeburns/noise-curve-ristretto",
     "noise-handshake": "^2.1.0",
     "sodium-secretstream": "^1.0.0",
-    "sodium-universal": "^3.0.4",
+    "sodium-universal": "lukeburns/sodium-universal#ristretto",
     "streamx": "^2.10.2"
   },
   "devDependencies": {
