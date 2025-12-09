@@ -10,7 +10,7 @@
   "dependencies": {
     "b4a": "^1.1.0",
     "hypercore-crypto": "github:lukeburns/hypercore-crypto",
-    "noise-curve-red": "github:lukeburns/noise-curve-red",
+    "noise-curve-ed": "github:lukeburns/noise-curve-ed",
     "noise-handshake": "^4.0.0",
     "red25519": "^0.4.0",
     "sodium-secretstream": "^1.1.0",
