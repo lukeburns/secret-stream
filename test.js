@@ -836,6 +836,6 @@ test('malformed key material errors fast', function (t) {
 })
 
 function getPqModule() {
-  if (pqModulePromise === null) pqModulePromise = import('@lukeburns/noise-handshake/pq')
+  if (pqModulePromise === null) pqModulePromise = import('noise-handshake/pq')
   return pqModulePromise
 }
