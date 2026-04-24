@@ -1,7 +1,7 @@
 {
-  "name": "@hyperswarm/secret-stream",
+  "name": "@lukeburns/secret-stream",
   "version": "6.9.1",
-  "description": "Secret stream backed by Noise and libsodium's secretstream",
+  "description": "Secret stream backed by Noise protocol with post-quantum extensions",
   "main": "index.js",
   "imports": {
     "crypto": {
@@ -24,8 +24,7 @@
   "dependencies": {
     "b4a": "^1.1.0",
     "hypercore-crypto": "^3.3.1",
-    "noise-curve-ed": "^2.0.1",
-    "noise-handshake": "^4.0.0",
+    "@lukeburns/noise-handshake": "^4.3.0",
     "sodium-secretstream": "^1.1.0",
     "sodium-universal": "^5.0.0",
     "streamx": "^2.14.0",
@@ -53,10 +52,12 @@
     "type": "git",
     "url": "https://github.com/holepunchto/hyperswarm-secret-stream.git"
   },
-  "author": "Mathias Buus (@mafintosh)",
+  "author": "Luke Burns",
+  "contributors": [
+    "Mathias Buus (@mafintosh)"
+  ],
   "license": "Apache-2.0",
-  "bugs": {
-    "url": "https://github.com/holepunchto/hyperswarm-secret-stream/issues"
-  },
-  "homepage": "https://github.com/holepunchto/hyperswarm-secret-stream"
+  "publishConfig": {
+    "access": "restricted"
+  }
 }

@@ -2,7 +2,7 @@
 
 ### [See the full API docs at docs.pears.com](https://docs.pears.com/helpers/secretstream)
 
-Secret stream backed by Noise and libsodium's secretstream
+Secret stream backed by PQ Noise and libsodium's secretstream.
 
 ```
 npm install @hyperswarm/secret-stream
@@ -54,9 +54,16 @@ Options include:
 
 ```js
 {
-  pattern: 'XX', // which noise pattern to use
-  remotePublicKey, // set if your handshake requires it
+  pattern: 'pqXX', // which PQ noise pattern to use (must start with pq)
+  remotePublicKey, // static KEM public key if your handshake requires it
   keyPair: { publicKey, secretKey },
+  kem, // defaults to MLKEM512 (@lukeburns/noise-handshake/pq preset)
+  ekem, // optional KEM override for ephemeral keys
+  skem, // optional KEM override for static keys
+  cipher, // optional @lukeburns/noise-handshake/pq cipher override
+  hash, // optional @lukeburns/noise-handshake/pq hash override
+  psk, // optional 32-byte PSK
+  psks, // optional array of 32-byte PSKs
   handshake: { // if you want to use an handshake performed elsewhere pass it here
     tx,
     rx,
@@ -71,11 +78,61 @@ Options include:
 The SecretStream returned is a Duplex stream that you use as as normal stream, to write/read data from,
 except it's payloads are encrypted using the libsodium secretstream.
 
-Note that this uses ed25519 for the handshakes per default.
+The built-in handshake is PQ-only and uses ML-KEM key material. Classical Noise (curve-ed) peers are not wire-compatible.
 
-If need to load the key pair asynchronously, then secret-stream also supports passing in a promise
+If you need to load the key pair asynchronously, then secret-stream also supports passing in a promise
 instead of the keypair that later resolves to `{ publicKey, secretKey }`. The stream lifecycle will wait
 for the resolution and auto destroy the stream if the promise errors.
+
+When `pattern` requires a pre-shared static key (for example `pqIK`), `remotePublicKey` must be a static KEM public key for the selected `skem`/`kem`.
+
+## Migrating from classical to PQ
+
+If you are migrating an existing setup, the simplest mental model is:
+
+- `XX` becomes `pqXX`
+- `keyPair` is still `{ publicKey, secretKey }`, but now it is ML-KEM key material
+- everything else (stream wiring, read/write flow) stays the same
+
+Before (classical):
+
+```js
+const SecretStream = require('@hyperswarm/secret-stream')
+
+const aKeyPair = SecretStream.keyPair()
+const bKeyPair = SecretStream.keyPair()
+
+const a = new SecretStream(true, aRaw, {
+  pattern: 'XX',
+  keyPair: aKeyPair
+})
+
+const b = new SecretStream(false, bRaw, {
+  pattern: 'XX',
+  keyPair: bKeyPair
+})
+```
+
+After (post-quantum):
+
+```js
+const SecretStream = require('@hyperswarm/secret-stream')
+
+const aKeyPair = await SecretStream.keyPair()
+const bKeyPair = await SecretStream.keyPair()
+
+const a = new SecretStream(true, aRaw, {
+  pattern: 'pqXX',
+  keyPair: aKeyPair
+})
+
+const b = new SecretStream(false, bRaw, {
+  pattern: 'pqXX',
+  keyPair: bKeyPair
+})
+```
+
+If you persist long-term identity keys, persist and reuse the new PQ keypairs just like you did before.
 
 #### `s.start(rawStream, [options])`
 
@@ -151,9 +208,11 @@ Same as `send(buffer)` but does not return a promise.
 
 Emmitted when an unordered message is received
 
-#### `keyPair = SecretStream.keyPair([seed])`
+#### `keyPair = await SecretStream.keyPair([seed], [options])`
 
-Generate a ed25519 key pair.
+Generate a static KEM key pair for PQ handshakes.
+
+`options` can include `{ kem, skem }` so key generation matches the selected handshake KEM.
 
 ## License
 

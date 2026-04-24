@@ -6,6 +6,7 @@ const { Readable, Duplex } = require('streamx')
 const NoiseStream = require('./')
 const UDX = require('udx-native')
 const sodium = require('sodium-native')
+let pqModulePromise = null
 
 test('basic', function (t) {
   t.plan(2)
@@ -357,10 +358,10 @@ test('can destroy in the first tick', function (t) {
   stream.emit('error', new Error('stop'))
 })
 
-test('keypair can be a promise', function (t) {
+test('keypair can be a promise', async function (t) {
   t.plan(2)
 
-  const kp = NoiseStream.keyPair()
+  const kp = await NoiseStream.keyPair()
 
   const a = new NoiseStream(true, null, {
     keyPair: new Promise((resolve) => {
@@ -411,7 +412,7 @@ test('keypair can be a promise that rejects', function (t) {
   })
 })
 
-test('drains data after both streams end', function (t) {
+test('drains data before both streams end', async function (t) {
   t.plan(1)
 
   const a = new NoiseStream(true)
@@ -419,11 +420,13 @@ test('drains data after both streams end', function (t) {
 
   a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
 
-  b.end()
+  await Promise.all([a.opened, b.opened])
+
   a.end(Buffer.from('hello world'))
 
   b.once('data', function (data) {
     t.alike(data, Buffer.from('hello world'))
+    b.end()
   })
 })
 
@@ -637,8 +640,8 @@ test('basic - unslab checks', function (t) {
   })
 
   b.on('open', function () {
-    const push = a._encrypt
-    const pull = a._decrypt
+    const push = b._encrypt
+    const pull = b._decrypt
 
     t.ok(push.key.buffer.byteLength < 100, 'push.key.buffer no slab')
     t.ok(push.state.buffer.byteLength < 100, 'push.state.buffer no slab')
@@ -676,7 +679,7 @@ function udxPair(getOpts = () => ({})) {
     await socket2.close()
   }
 
-  async function streamClosed(stream) {
+  function streamClosed(stream) {
     if (stream.destroyed) return
     return new Promise((resolve) => stream.once('close', resolve))
   }
@@ -751,3 +754,88 @@ test('enableSend opt', async function (t) {
   await b.send(Buffer.from('b-message which does not bubble up at a'))
   await a.send(Buffer.from('a-message which bubbles up at b'))
 })
+
+test('pqIK works with pre-shared responder static key', async function (t) {
+  t.plan(2)
+
+  const initiatorKeyPair = await NoiseStream.keyPair()
+  const responderKeyPair = await NoiseStream.keyPair()
+
+  const a = new NoiseStream(true, null, {
+    pattern: 'pqIK',
+    keyPair: initiatorKeyPair,
+    remotePublicKey: responderKeyPair.publicKey
+  })
+
+  const b = new NoiseStream(false, null, {
+    pattern: 'pqIK',
+    keyPair: responderKeyPair
+  })
+
+  a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
+
+  await Promise.all([Events.once(a, 'connect'), Events.once(b, 'connect')])
+
+  t.alike(a.remotePublicKey, responderKeyPair.publicKey)
+  t.alike(b.remotePublicKey, initiatorKeyPair.publicKey)
+})
+
+test('pqIK fails with wrong remotePublicKey', async function (t) {
+  t.plan(1)
+
+  const initiatorKeyPair = await NoiseStream.keyPair()
+  const responderKeyPair = await NoiseStream.keyPair()
+  const wrongResponderKeyPair = await NoiseStream.keyPair()
+
+  const a = new NoiseStream(true, null, {
+    pattern: 'pqIK',
+    keyPair: initiatorKeyPair,
+    remotePublicKey: wrongResponderKeyPair.publicKey
+  })
+
+  const b = new NoiseStream(false, null, {
+    pattern: 'pqIK',
+    keyPair: responderKeyPair
+  })
+
+  b.on('error', () => {})
+  a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
+
+  await Events.once(a, 'error')
+  t.pass('handshake fails when pqIK remote static key is incorrect')
+})
+
+test('supports kem overrides (MLKEM1024)', async function (t) {
+  t.plan(1)
+
+  const pq = await getPqModule()
+  const a = new NoiseStream(true, null, { kem: pq.MLKEM1024 })
+  const b = new NoiseStream(false, null, { kem: pq.MLKEM1024 })
+
+  a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
+
+  a.write(Buffer.from('pq-kem-override'))
+  const [data] = await Events.once(b, 'data')
+  t.alike(data, Buffer.from('pq-kem-override'))
+})
+
+test('malformed key material errors fast', function (t) {
+  t.plan(1)
+
+  try {
+    new NoiseStream(true, null, {
+      keyPair: {
+        publicKey: Buffer.alloc(1),
+        secretKey: Buffer.alloc(1)
+      }
+    })
+    t.fail('constructor should throw on malformed key material')
+  } catch (err) {
+    t.ok(/Invalid keyPair\.publicKey byte length/.test(err.message))
+  }
+})
+
+function getPqModule() {
+  if (pqModulePromise === null) pqModulePromise = import('@lukeburns/noise-handshake/pq')
+  return pqModulePromise
+}

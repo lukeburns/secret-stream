@@ -52,7 +52,17 @@ module.exports = class NoiseSecretStream extends Duplex {
 
     // handshake state
     this._handshake = null
-    this._handshakePattern = opts.pattern || null
+    this._handshakePattern = opts.handshakePattern || opts.pattern || null
+    this._handshakeOpts = {
+      kem: opts.kem,
+      ekem: opts.ekem,
+      skem: opts.skem,
+      cipher: opts.cipher,
+      hash: opts.hash,
+      psk: opts.psk,
+      psks: opts.psks,
+      rng: opts.rng
+    }
     this._handshakeDone = null
 
     // message parsing state
@@ -185,10 +195,22 @@ module.exports = class NoiseSecretStream extends Duplex {
   }
 
   _onkeypair(keyPair) {
-    const pattern = this._handshakePattern || 'XX'
+    const pattern = this._handshakePattern || 'pqXX'
     const remotePublicKey = this.remotePublicKey
 
-    this._handshake = new Handshake(this.isInitiator, keyPair, remotePublicKey, pattern)
+    if (pattern.startsWith('pq') === false) {
+      throw new Error(
+        'Invalid pattern. hyperswarm-secret-stream is now PQ-only; use a pq* pattern.'
+      )
+    }
+
+    this._handshake = Handshake.create(
+      this.isInitiator,
+      keyPair,
+      remotePublicKey,
+      pattern,
+      this._handshakeOpts
+    )
     this.publicKey = this._handshake.keyPair.publicKey
   }
 
@@ -199,7 +221,7 @@ module.exports = class NoiseSecretStream extends Duplex {
       return
     }
 
-    if (!keyPair) keyPair = Handshake.keyPair()
+    if (!keyPair) keyPair = Handshake.keyPair(null, this._handshakeOpts)
 
     if (typeof keyPair.then === 'function') {
       this._onkeypairpromise(keyPair)
@@ -372,6 +394,11 @@ module.exports = class NoiseSecretStream extends Duplex {
   }
 
   _setupSecretStream(tx, rx, handshakeHash, publicKey, remotePublicKey) {
+    if (tx.byteLength < KEYBYTES || rx.byteLength < KEYBYTES) {
+      this.destroy(new Error('Handshake did not return enough key material for secretstream'))
+      return
+    }
+
     const buf = b4a.allocUnsafeSlow(3 + IDHEADERBYTES)
     writeUint24le(IDHEADERBYTES, buf)
 
@@ -504,6 +531,20 @@ module.exports = class NoiseSecretStream extends Duplex {
   _final(cb) {
     this._clearKeepAlive()
     this._ended--
+
+    if (this._encrypt === null && this.opened) {
+      this.opened.then(
+        (opened) => {
+          if (opened !== false && this._rawStream && !this._rawStream.destroyed) {
+            this._rawStream.end()
+          }
+          cb(null)
+        },
+        () => cb(null)
+      )
+      return
+    }
+
     this._rawStream.end()
     cb(null)
   }
