@@ -1,6 +1,6 @@
 {
   "name": "@lukeburns/secret-stream",
-  "version": "6.9.3",
+  "version": "6.9.4",
   "description": "Secret stream backed by Noise protocol with post-quantum extensions",
   "main": "index.js",
   "imports": {
@@ -23,7 +23,7 @@
   ],
   "dependencies": {
     "b4a": "^1.1.0",
-    "hyperswarm-crypto": "npm:@lukeburns/hyperswarm-crypto@^0.1.0",
+    "hyperswarm-crypto": "npm:@lukeburns/hyperswarm-crypto@^0.2.1",
     "sodium-secretstream": "^1.1.0",
     "sodium-universal": "^5.0.0",
     "streamx": "^2.14.0",
