@@ -1,6 +1,6 @@
 const { Pull, Push, HEADERBYTES, KEYBYTES, ABYTES } = require('sodium-secretstream')
 const sodium = require('sodium-universal')
-const crypto = require('hypercore-crypto')
+const crypto = require('hyperswarm-crypto')
 const { Duplex, Writable, getStreamError } = require('streamx')
 const b4a = require('b4a')
 const Timeout = require('timeout-refresh')
@@ -53,7 +53,10 @@ module.exports = class NoiseSecretStream extends Duplex {
     // handshake state
     this._handshake = null
     this._handshakePattern = opts.handshakePattern || opts.pattern || null
+    this._handshakeUpgrade = opts.upgrade || null
+    this._outerHandshakeHash = opts.outerHandshakeHash || null
     this._handshakeOpts = {
+      upgrade: this._handshakeUpgrade,
       kem: opts.kem,
       ekem: opts.ekem,
       skem: opts.skem,
@@ -61,7 +64,8 @@ module.exports = class NoiseSecretStream extends Duplex {
       hash: opts.hash,
       psk: opts.psk,
       psks: opts.psks,
-      rng: opts.rng
+      rng: opts.rng,
+      outerHandshakeHash: this._outerHandshakeHash
     }
     this._handshakeDone = null
 
@@ -145,8 +149,12 @@ module.exports = class NoiseSecretStream extends Duplex {
     this.rawStream.on('error', this._onrawerror.bind(this))
     this.rawStream.on('close', this._onrawclose.bind(this))
 
-    this._startHandshake(opts.handshake, opts.keyPair || null)
-    this._continueOpen(null)
+    if (this._handshakeUpgrade && !opts.handshake) {
+      this._startUpgradeHandshake(opts.keyPair || null)
+    } else {
+      this._startHandshake(opts.handshake, opts.keyPair || null)
+      this._continueOpen(null)
+    }
 
     if (this.destroying) return
 
@@ -195,23 +203,61 @@ module.exports = class NoiseSecretStream extends Duplex {
   }
 
   _onkeypair(keyPair) {
-    const pattern = this._handshakePattern || 'pqXX'
+    const pattern = getHandshakePattern(this._handshakePattern)
     const remotePublicKey = this.remotePublicKey
 
-    if (pattern.startsWith('pq') === false) {
-      throw new Error(
-        'Invalid pattern. hyperswarm-secret-stream is now PQ-only; use a pq* pattern.'
-      )
-    }
+    const handshakeOpts = this._handshakeUpgrade
+      ? { ...this._handshakeOpts, outerHandshakeHash: this._outerHandshakeHash }
+      : this._handshakeOpts
 
     this._handshake = Handshake.create(
       this.isInitiator,
       keyPair,
       remotePublicKey,
       pattern,
-      this._handshakeOpts
+      handshakeOpts
     )
     this.publicKey = this._handshake.keyPair.publicKey
+  }
+
+  _startUpgradeHandshake(keyPair) {
+    if (!handshakeUpgradeNeedsOuterHash(this._handshakeOpts)) {
+      this._startHandshake(null, keyPair)
+      this._continueOpen(null)
+      return
+    }
+
+    const hash = getOuterHandshakeHash(this.rawStream, this._outerHandshakeHash)
+    if (hash) return this._startUpgradeHandshakeWithHash(keyPair, hash)
+
+    if (
+      !this.rawStream ||
+      !this.rawStream.opened ||
+      typeof this.rawStream.opened.then !== 'function'
+    ) {
+      this._continueOpen(new Error('Handshake upgrade requires an outer handshake hash'))
+      return
+    }
+
+    this.rawStream.opened.then(
+      () => {
+        if (this.destroying) return
+        const hash = getOuterHandshakeHash(this.rawStream, this._outerHandshakeHash)
+        if (!hash) {
+          this._continueOpen(new Error('Handshake upgrade requires an outer handshake hash'))
+          return
+        }
+        this._startUpgradeHandshakeWithHash(keyPair, hash)
+      },
+      (err) => this._continueOpen(err)
+    )
+  }
+
+  _startUpgradeHandshakeWithHash(keyPair, hash) {
+    this._outerHandshakeHash = hash
+    this._handshakeOpts.outerHandshakeHash = hash
+    this._startHandshake(null, keyPair)
+    this._continueOpen(null)
   }
 
   _startHandshake(handshake, keyPair) {
@@ -675,6 +721,22 @@ function streamId(handshakeHash, isInitiator, out = b4a.allocUnsafe(32)) {
 
 function toBuffer(data) {
   return typeof data === 'string' ? b4a.from(data) : data
+}
+
+function getOuterHandshakeHash(rawStream, fallback) {
+  const hash = fallback || (rawStream && rawStream.handshakeHash)
+  if (!hash) return null
+  return b4a.isBuffer(hash) ? hash : b4a.from(hash)
+}
+
+function getHandshakePattern(pattern) {
+  if (crypto.getHandshakePattern) return crypto.getHandshakePattern(pattern)
+  return pattern || crypto.DEFAULT_HANDSHAKE_PATTERN || 'XX'
+}
+
+function handshakeUpgradeNeedsOuterHash(opts) {
+  if (crypto.handshakeUpgradeNeedsOuterHash) return crypto.handshakeUpgradeNeedsOuterHash(opts)
+  return false
 }
 
 function destroyTimeout() {

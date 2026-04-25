@@ -3,10 +3,10 @@ const net = require('net')
 const Events = require('events')
 const crypto = require('crypto')
 const { Readable, Duplex } = require('streamx')
+const swarmCrypto = require('hyperswarm-crypto')
 const NoiseStream = require('./')
 const UDX = require('udx-native')
 const sodium = require('sodium-native')
-let pqModulePromise = null
 
 test('basic', function (t) {
   t.plan(2)
@@ -808,15 +808,67 @@ test('pqIK fails with wrong remotePublicKey', async function (t) {
 test('supports kem overrides (MLKEM1024)', async function (t) {
   t.plan(1)
 
-  const pq = await getPqModule()
-  const a = new NoiseStream(true, null, { kem: pq.MLKEM1024 })
-  const b = new NoiseStream(false, null, { kem: pq.MLKEM1024 })
+  const a = new NoiseStream(true, null, { kem: swarmCrypto.MLKEM1024 })
+  const b = new NoiseStream(false, null, { kem: swarmCrypto.MLKEM1024 })
 
   a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
 
   a.write(Buffer.from('pq-kem-override'))
   const [data] = await Events.once(b, 'data')
   t.alike(data, Buffer.from('pq-kem-override'))
+})
+
+test('bound pq upgrade uses outer handshake hash binding', async function (t) {
+  t.plan(3)
+
+  const outerHandshakeHash = Buffer.alloc(32, 9)
+  const a = new NoiseStream(true, null, {
+    upgrade: 'bound-pq',
+    outerHandshakeHash
+  })
+  const b = new NoiseStream(false, null, {
+    upgrade: 'bound-pq',
+    outerHandshakeHash
+  })
+
+  a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
+
+  a.write(Buffer.from('bound-pq'))
+  const [data] = await Events.once(b, 'data')
+
+  t.alike(data, Buffer.from('bound-pq'))
+  t.alike(a.handshakeHash, b.handshakeHash)
+  t.ok(!a.handshakeHash.equals(outerHandshakeHash), 'inner hash becomes final stream hash')
+})
+
+test('bound pq upgrade rejects mismatched outer handshake hashes', async function (t) {
+  t.plan(1)
+
+  const a = new NoiseStream(true, null, {
+    upgrade: 'bound-pq',
+    outerHandshakeHash: Buffer.alloc(32, 1)
+  })
+  const b = new NoiseStream(false, null, {
+    upgrade: 'bound-pq',
+    outerHandshakeHash: Buffer.alloc(32, 2)
+  })
+
+  b.on('error', () => {})
+  a.rawStream.pipe(b.rawStream).pipe(a.rawStream)
+
+  await Events.once(a, 'error')
+  t.pass('mismatched outer binding fails the inner upgrade')
+})
+
+test('bound pq upgrade requires outer handshake hash', async function (t) {
+  t.plan(1)
+
+  const a = new NoiseStream(true, null, {
+    upgrade: 'bound-pq'
+  })
+
+  await Events.once(a, 'error')
+  t.pass('legacy carrier without outer hash fails cleanly')
 })
 
 test('malformed key material errors fast', function (t) {
@@ -834,8 +886,3 @@ test('malformed key material errors fast', function (t) {
     t.ok(/Invalid keyPair\.publicKey byte length/.test(err.message))
   }
 })
-
-function getPqModule() {
-  if (pqModulePromise === null) pqModulePromise = import('noise-handshake/pq')
-  return pqModulePromise
-}
