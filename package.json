@@ -1,6 +1,6 @@
 {
   "name": "@lukeburns/secret-stream",
-  "version": "6.9.4",
+  "version": "6.9.5",
   "description": "Secret stream backed by Noise protocol with post-quantum extensions",
   "main": "index.js",
   "imports": {
